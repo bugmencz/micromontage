@@ -2,9 +2,10 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Data AudioWorklet Engine</title>
+<title>Data Audio Engine</title>
 <style>
 body { background:black; color:white; font-family:monospace; text-align:center; }
+button, input { margin:5px; }
 </style>
 </head>
 <body>
@@ -14,30 +15,36 @@ body { background:black; color:white; font-family:monospace; text-align:center; 
 <button onclick="init()">Init</button>
 <button onclick="start()">Start</button>
 <button onclick="stop()">Stop</button>
+<button onclick="startMic()">Mic Input</button>
 
-<input type="file" id="fileInput">
 <br>
-
-<label>Detune:</label>
-<input type="range" id="detune" min="0" max="20" value="3">
+<input type="file" id="fileInput">
 
 <script>
 let ctx, node;
-let dataArray = [];
-let running = false;
 
-// INIT AUDIO WORKLET
 async function init() {
   ctx = new AudioContext();
   await ctx.audioWorklet.addModule("processor.js");
 
-  node = new AudioWorkletNode(ctx, "data-processor");
+  node = new AudioWorkletNode(ctx, "data-processor", {
+    outputChannelCount: [2]
+  });
+
   node.connect(ctx.destination);
+
+  // 🔑 REQUIRED for sound
+  await ctx.resume();
+
+  console.log("Audio initialized");
 }
 
-// SEND DATA TO WORKLET
-function sendData(data) {
-  node.port.postMessage({ type: "data", data });
+function start() {
+  node.port.postMessage({ type: "start" });
+}
+
+function stop() {
+  node.port.postMessage({ type: "stop" });
 }
 
 // FILE INPUT
@@ -46,36 +53,25 @@ document.getElementById("fileInput").addEventListener("change", e => {
   const reader = new FileReader();
 
   reader.onload = () => {
+    let data;
+
     if (file.type.includes("text")) {
-      dataArray = reader.result.split(/[\s,]+/)
+      data = reader.result.split(/[\s,]+/)
         .map(Number)
         .filter(n => !isNaN(n));
     } else {
-      dataArray = Array.from(new Uint8Array(reader.result));
+      data = Array.from(new Uint8Array(reader.result));
     }
 
-    sendData(dataArray);
+    node.port.postMessage({ type: "data", data });
+    console.log("Data loaded:", data.length);
   };
 
   if (file.type.includes("text")) reader.readAsText(file);
   else reader.readAsArrayBuffer(file);
 });
 
-// START / STOP
-function start() {
-  running = true;
-  node.port.postMessage({
-    type: "start",
-    detune: document.getElementById("detune").value
-  });
-}
-
-function stop() {
-  running = false;
-  node.port.postMessage({ type: "stop" });
-}
-
-// 🎤 MICROPHONE FFT INPUT
+// 🎤 MIC INPUT (this actually drives sound)
 async function startMic() {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const src = ctx.createMediaStreamSource(stream);
@@ -88,22 +84,13 @@ async function startMic() {
 
   setInterval(() => {
     analyser.getByteFrequencyData(buffer);
-    sendData(Array.from(buffer));
+    node.port.postMessage({
+      type: "data",
+      data: Array.from(buffer)
+    });
   }, 50);
 }
-
-// 🌐 WEBSOCKET INPUT
-function startWS() {
-  const ws = new WebSocket("ws://localhost:8080");
-
-  ws.onmessage = (msg) => {
-    try {
-      const data = JSON.parse(msg.data);
-      sendData(data);
-    } catch {}
-  };
-}
-
 </script>
+
 </body>
 </html>
