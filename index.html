@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Data AudioWorklet Engine</title>
+<style>
+body { background:black; color:white; font-family:monospace; text-align:center; }
+</style>
+</head>
+<body>
+
+<h2>AudioWorklet Data Engine</h2>
+
+<button onclick="init()">Init</button>
+<button onclick="start()">Start</button>
+<button onclick="stop()">Stop</button>
+
+<input type="file" id="fileInput">
+<br>
+
+<label>Detune:</label>
+<input type="range" id="detune" min="0" max="20" value="3">
+
+<script>
+let ctx, node;
+let dataArray = [];
+let running = false;
+
+// INIT AUDIO WORKLET
+async function init() {
+  ctx = new AudioContext();
+  await ctx.audioWorklet.addModule("processor.js");
+
+  node = new AudioWorkletNode(ctx, "data-processor");
+  node.connect(ctx.destination);
+}
+
+// SEND DATA TO WORKLET
+function sendData(data) {
+  node.port.postMessage({ type: "data", data });
+}
+
+// FILE INPUT
+document.getElementById("fileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    if (file.type.includes("text")) {
+      dataArray = reader.result.split(/[\s,]+/)
+        .map(Number)
+        .filter(n => !isNaN(n));
+    } else {
+      dataArray = Array.from(new Uint8Array(reader.result));
+    }
+
+    sendData(dataArray);
+  };
+
+  if (file.type.includes("text")) reader.readAsText(file);
+  else reader.readAsArrayBuffer(file);
+});
+
+// START / STOP
+function start() {
+  running = true;
+  node.port.postMessage({
+    type: "start",
+    detune: document.getElementById("detune").value
+  });
+}
+
+function stop() {
+  running = false;
+  node.port.postMessage({ type: "stop" });
+}
+
+// 🎤 MICROPHONE FFT INPUT
+async function startMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const src = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+
+  analyser.fftSize = 256;
+  src.connect(analyser);
+
+  const buffer = new Uint8Array(analyser.frequencyBinCount);
+
+  setInterval(() => {
+    analyser.getByteFrequencyData(buffer);
+    sendData(Array.from(buffer));
+  }, 50);
+}
+
+// 🌐 WEBSOCKET INPUT
+function startWS() {
+  const ws = new WebSocket("ws://localhost:8080");
+
+  ws.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
+      sendData(data);
+    } catch {}
+  };
+}
+
+</script>
+</body>
+</html>
